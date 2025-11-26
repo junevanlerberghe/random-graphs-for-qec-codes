@@ -9,12 +9,14 @@ Given a parity check matrix for a valid CSS code, perform the following:
 """
 
 import os
+import pandas as pd
 import planqtn
 import numpy as np
 from planqtn.networks.stabilizer_measurement_state_prep import (
     StabilizerMeasurementStatePrepTN,
 )
 
+code_metrics = []
 for code in os.listdir("outputs/results_ER"):
     if not os.path.isdir(f"outputs/results_ER/{code}"):
         continue
@@ -79,6 +81,9 @@ for code in os.listdir("outputs/results_ER"):
         "avg_stabilizer_weight": round(stabilizer_density, 3),
         "stabilizer_wep": stabilizer_wep,
         "normalizer_wep": normalizer_wep,
-
     }
-    exit()
+
+    code_metrics.append(row)
+
+metrics_df = pd.DataFrame(code_metrics)
+metrics_df.to_csv("outputs/results_ER/code_metrics.csv", index=False)
