@@ -4,3 +4,11 @@ Three python files:
 2. run_graph_generation.py - Run this file to generate random codes. It will run ER and WS random graph models and save the results if a valid code is produced. 
 
 3. analyze_code_properties.py - Given the parity check matrices generated from the above file, will read them and gather the properties of the resulting code for further analysis. 
+
+
+Database & db_connector.py:
+
+All results are stored in a single SQLite file (outputs/qec_results.db).  
+The fil db_connector.py provides a small wrapper class GraphResultsDB to read and write data to the DB.
+
+![Database Schema](db_schema.jpg)

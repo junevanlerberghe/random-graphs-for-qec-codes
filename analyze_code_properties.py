@@ -1,4 +1,3 @@
-
 """
 Given a parity check matrix for a valid CSS code, perform the following:
 1. run the WEP calculation (possibly brute force?)
@@ -8,82 +7,111 @@ Given a parity check matrix for a valid CSS code, perform the following:
 5. calculate code rate (k/n)
 """
 
-import os
-import pandas as pd
 import planqtn
 import numpy as np
 from planqtn.networks.stabilizer_measurement_state_prep import (
     StabilizerMeasurementStatePrepTN,
 )
+from db_connector import GraphResultsDB
 
-code_metrics = []
-for code in os.listdir("outputs/results_ER"):
-    if not os.path.isdir(f"outputs/results_ER/{code}"):
-        continue
-    pcm_file = f"outputs/results_ER/{code}/parity_check_matrix.csv"
-    # get numpy array from pcm_file csv
-    pcm = np.genfromtxt(pcm_file, delimiter=" ", dtype=int)
-    print("Analyzing code: ", code)
 
-    num_qubits = pcm.shape[1] // 2
-    logical_qubits = num_qubits - pcm.shape[0]
-    print("\t Number of qubits: ", num_qubits)
-    print("\t Number of logical qubits: ", logical_qubits)
-    print("\t Code rate (k/n): ", round(logical_qubits / num_qubits, 3))
+def main():
+    db = GraphResultsDB("database/qec_results.db")
 
-    
-    brute_force_node = StabilizerMeasurementStatePrepTN(pcm).conjoin_nodes()
+    graph_runs_ids = db.get_graph_runs_ids_with_pcm()
+    print("Found", len(graph_runs_ids), "runs with parity-check matrices")
 
-    stabilizer_wep = (
-        brute_force_node
-        .stabilizer_enumerator_polynomial()
-    )
+    for graph_runs_id in graph_runs_ids:
+        run_info = db.get_run_by_id(graph_runs_id)
+        if run_info is None:
+            print("Skipping graph_runs_id =", graph_runs_id, "(no run_info)")
+            continue
 
-    print("\t Stabilizer WEP: ", stabilizer_wep)
+        run_id = run_info["run_id"]
+        model = run_info["model"]
+        p = run_info["p"]
+        n_qubits_run = run_info["n_qubits"]
+        n_checks_run = run_info["n_checks"]
 
-    normalizer_wep = stabilizer_wep.macwilliams_dual(num_qubits, logical_qubits, to_normalizer=True)
-    print("\t Normalizer WEP: ", normalizer_wep)
+        print(
+            f"\nAnalyzing run: graph_runs_id={graph_runs_id}, "
+            f"run_id={run_id}, model={model}, p={p}, "
+            f"n_qubits={n_qubits_run}, n_checks={n_checks_run}"
+        )
 
-    logical_wep = stabilizer_wep + normalizer_wep * -1
-    non_zeros_dict = {k: v for k, v in logical_wep.items() if v != 0}
-    distance = min(non_zeros_dict.keys())
-    print("\t Distance: ", distance)
+        pcm = db.get_parity_check_matrix_for_run(graph_runs_id)
 
-    logial_operator_density = 0
-    for weight, count in logical_wep.items():
-        logial_operator_density += weight * count
-    logial_operator_density /= sum(logical_wep.dict.values())
-    print("\t Avg logical operator weight: ", round(logial_operator_density, 3))
+        num_qubits = pcm.shape[1] // 2
+        logical_qubits = num_qubits - pcm.shape[0]
+        code_rate = float(logical_qubits) / float(num_qubits) if num_qubits > 0 else 0.0
 
-    stabilizer_density = 0
-    for weight, count in stabilizer_wep.items():
-        stabilizer_density += weight * count
-    stabilizer_density /= sum(stabilizer_wep.dict.values())
-    print("\t Avg stabilizer weight: ", round(stabilizer_density, 3))
+        print("\tNumber of qubits: ", num_qubits)
+        print("\tNumber of logical qubits: ", logical_qubits)
+        print("\tCode rate (k/n): ", round(code_rate, 3))
 
-    non_zeros_dict = {k: v for k, v in stabilizer_wep.items() if k != 0}
-    min_weight = min(non_zeros_dict.keys())
-    if(min_weight < distance):
-        degenerate = True
-    else:
-        degenerate = False
+        brute_force_node = StabilizerMeasurementStatePrepTN(pcm).conjoin_nodes()
 
-    print("\t Degenerate: ", degenerate)
+        stabilizer_wep = brute_force_node.stabilizer_enumerator_polynomial()
+        print("\tStabilizer WEP: ", stabilizer_wep)
 
-    row = {
-        "code_id": code, 
-        "n_qubits": num_qubits,
-        "k_logical": logical_qubits,
-        "distance": distance,
-        "code_rate": round(logical_qubits / num_qubits, 3),
-        "degenerate": degenerate,
-        "avg_logical_operator_weight": round(logial_operator_density, 3),
-        "avg_stabilizer_weight": round(stabilizer_density, 3),
-        "stabilizer_wep": stabilizer_wep,
-        "normalizer_wep": normalizer_wep,
-    }
+        normalizer_wep = stabilizer_wep.macwilliams_dual(
+            num_qubits, logical_qubits, to_normalizer=True
+        )
+        print("\tNormalizer WEP: ", normalizer_wep)
 
-    code_metrics.append(row)
+        logical_wep = stabilizer_wep + normalizer_wep * -1
 
-metrics_df = pd.DataFrame(code_metrics)
-metrics_df.to_csv("outputs/results_ER/code_metrics.csv", index=False)
+        non_zeros_dict = {k: v for k, v in logical_wep.items() if v != 0}
+        distance = min(non_zeros_dict.keys()) if non_zeros_dict else 0
+        print("\tDistance: ", distance)
+
+        logial_operator_density = 0.0
+        total_logical = sum(logical_wep.dict.values())
+        if total_logical > 0:
+            for weight, count in logical_wep.items():
+                logial_operator_density += weight * count
+            logial_operator_density /= total_logical
+        print(
+            "\tAvg logical operator weight: ",
+            round(logial_operator_density, 3),
+        )
+
+        stabilizer_density = 0.0
+        total_stab = sum(stabilizer_wep.dict.values())
+        if total_stab > 0:
+            for weight, count in stabilizer_wep.items():
+                stabilizer_density += weight * count
+            stabilizer_density /= total_stab
+        print(
+            "\tAvg stabilizer weight: ",
+            round(stabilizer_density, 3),
+        )
+
+        non_zeros_stab = {k: v for k, v in stabilizer_wep.items() if k != 0}
+        min_weight = min(non_zeros_stab.keys()) if non_zeros_stab else 0
+        if min_weight < distance:
+            degenerate = True
+        else:
+            degenerate = False
+
+        print("\tDegenerate: ", degenerate)
+
+        db.insert_code_metrics(
+            graph_runs_id=graph_runs_id,
+            run_id=run_id,
+            n_qubits=num_qubits,
+            k_logical=logical_qubits,
+            distance=distance,
+            code_rate=code_rate,
+            degenerate=degenerate,
+            avg_logical_operator_weight=logial_operator_density,
+            avg_stabilizer_weight=stabilizer_density,
+            stabilizer_wep=stabilizer_wep,
+            normalizer_wep=normalizer_wep,
+        )
+
+    db.close()
+
+
+if __name__ == "__main__":
+    main()
